@@ -18,6 +18,7 @@ type Cluster struct {
 func main() {
 
     id := flag.Uint("id", 0, "id")
+    debug := flag.Bool("debug",false,"debug")
     flag.Parse()
 
     cluster := new(Cluster)
@@ -27,8 +28,8 @@ func main() {
     cluster.rpc.Start("234.5.6.7:9000")
 
     cluster.raft = new(raft.RaftCtrlBlock)
+    cluster.raft.SetDebug(*debug)
     cluster.raft.Init(uint32(*id), cluster, false);
-
 }
 
 func (cluster *Cluster) Receive(data []byte, dlen uint16 ) error {

@@ -51,6 +51,7 @@ type RaftCtrlBlock struct {
     leader      uint32
     candidate   uint32
     io          RaftIO
+    debug       bool
 }
 
 var (
@@ -59,25 +60,44 @@ var (
     ENOMEM = errors.New("No memory")
 )
 
+func (rcb *RaftCtrlBlock) Debug(args ... interface{}) {
+    if rcb.debug == false {
+        return
+    }
+
+    for _, v:= range args {
+        switch v.(type)  {
+            default:
+                fmt.Print(v)
+                fmt.Print(" ")
+        }
+    }
+    fmt.Print("\n")
+}
+
+func (rcb *RaftCtrlBlock) SetDebug(val bool) {
+    rcb.debug = val
+}
+
 /* Scan the events to be handled */
 func (rcb *RaftCtrlBlock) scaner() {
     for {
-        fmt.Println("[", rcb.state.State,"]:", "scan", rcb.peerlist)
+        rcb.Debug("[", rcb.state.State,"]:", "scan", rcb.peerlist)
         select {
         case <-rcb.sendTimer.C:
-            fmt.Println("[", rcb.state.State, "]:", "Send timer triigered")
+            rcb.Debug("[", rcb.state.State, "]:", "Send timer triigered")
             rcb.send()
         case <-rcb.scanTimer.C:
-            fmt.Println("[", rcb.state.State, "]:", "Age timer triigered")
+            rcb.Debug("[", rcb.state.State, "]:", "Age timer triigered")
             rcb.age()
         case <-rcb.stateTimer.C:
-            fmt.Println("[", rcb.state.State, "]:", "State timer triigered")
+            rcb.Debug("[", rcb.state.State, "]:", "State timer triigered")
             if rcb.state.State == RAFT_STATE_FOLLOWER {
                 if rcb.candidate == 0 && rcb.leader == 0 {
                     rcb.Candidate()
                 }
             } else if rcb.state.State == RAFT_STATE_CANDIDATE {
-                fmt.Println("[", rcb.state.State, "]:","ARB: ",rcb.countvote(), len(rcb.peerlist))
+                rcb.Debug("[", rcb.state.State, "]:","ARB: ",rcb.countvote(), len(rcb.peerlist))
                 if rcb.countvote() > uint32(len(rcb.peerlist)/2) || len(rcb.peerlist) == 1 {
                     rcb.Leader()
                 } else {
@@ -217,14 +237,14 @@ func (rcb *RaftCtrlBlock) Parser(data []byte, dlen uint16)  error {
 
 func (rcb *RaftCtrlBlock) vote() {
     rcb.state.VAddr = rcb.candidate
-    fmt.Println("[", rcb.state.State, "]:", "vote for", rcb.candidate)
+    rcb.Debug("[", rcb.state.State, "]:", "vote for", rcb.candidate)
 }
 
 func (rcb *RaftCtrlBlock) send() error {
     var data []byte
     var err error
 
-    fmt.Println("[", rcb.state.State, "]:", "send")
+    rcb.Debug("[", rcb.state.State, "]:", "send")
     rcb.smutex.Lock()
     defer rcb.smutex.Unlock()
     switch rcb.state.State {
@@ -232,7 +252,7 @@ func (rcb *RaftCtrlBlock) send() error {
             rcb.vote()
             data, err = rcb.BuildMsg()
         case RAFT_STATE_CANDIDATE, RAFT_STATE_LEADER:
-            fmt.Println("[", rcb.state.State, "]: build msg")
+            rcb.Debug("[", rcb.state.State, "]: build msg")
             data, err = rcb.BuildMsg()
         default:
             return nil
@@ -240,7 +260,7 @@ func (rcb *RaftCtrlBlock) send() error {
     if err == nil {
         return rcb.io.Send(data, (uint16)(len(data)))
     } else {
-        fmt.Println("[", rcb.state.State, "]: send err ", err)
+        rcb.Debug("[", rcb.state.State, "]: send err ", err)
         return err
     }
 }
@@ -251,7 +271,7 @@ func (rcb *RaftCtrlBlock) Init(addr uint32, io RaftIO, async bool) error {
     rcb.state.VAddr   = 0
     rcb.io    = io
 
-    fmt.Println("[", rcb.state.State, "]: addr ", addr)
+    rcb.Debug("[", rcb.state.State, "]: addr ", addr)
 
     rcb.peerlist = make(map[uint32] *RaftPeer)
     if rcb.peerlist == nil {
@@ -282,7 +302,7 @@ func (rcb *RaftCtrlBlock) Stop() {
 
 
 func (rcb *RaftCtrlBlock) BuildMsg() ([]byte, error) {
-    fmt.Println("[",rcb.state.State,"]: content", rcb.state)
+    rcb.Debug("[",rcb.state.State,"]: content", rcb.state)
     data, err := json.Marshal(rcb.state)
     return data, err
 }
@@ -296,7 +316,7 @@ func (rcb *RaftCtrlBlock) Follower() {
     /* Start random timer to be Candidate */
     rand.Seed(time.Now().UnixNano())
     interval := time.Duration(rand.Intn(7) * 1000 + 3000) * time.Millisecond
-    fmt.Println("[", rcb.state.State, "]:", "set timeout", interval)
+    rcb.Debug("[", rcb.state.State, "]:", "set timeout", interval)
     if rcb.stateTimer == nil {
         rcb.stateTimer = time.NewTimer(interval)
     } else {
@@ -311,7 +331,7 @@ func (rcb *RaftCtrlBlock) Candidate() {
     rcb.candidate   = rcb.state.Addr
     rcb.leader      = 0
 
-    fmt.Println("[", rcb.state.State, "]:")
+    rcb.Debug("[", rcb.state.State, "]:")
     /* Start ARB window timer */
     if rcb.stateTimer == nil {
         rcb.stateTimer = time.NewTimer(3000*time.Millisecond)
@@ -328,5 +348,5 @@ func (rcb *RaftCtrlBlock) Leader() {
     rcb.candidate   = 0
     rcb.leader      = rcb.state.Addr
     rcb.smutex.Unlock()
-    fmt.Println("[", rcb.state.State, "]:")
+    rcb.Debug("[", rcb.state.State, "]:")
 }
