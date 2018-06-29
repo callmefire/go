@@ -7,4 +7,4 @@ Descroption
 - cluster.go is an example to show how to write a cluster with mcastrpc and raft. it's tested with a multiple containers testing environment
 
 ToDo list
-- Map/Reduce module, which allow a task can be executed by distributed nodes
+- Map/Reduce module, which allow a task to be executed by distributed nodes
