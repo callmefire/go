@@ -1,0 +1,238 @@
+package mcastrpc
+
+import (
+    "net"
+    "sync"
+    "errors"
+    "encoding/gob"
+    "bufio"
+)
+
+const (
+    DefaultDgramSize  = 8192
+    HDRFLAGREQ uint16 = 1
+)
+
+/*
+Message format 
+---------------------------------------------
+|   8bit   |   8bit   |   8bit   |   8bit   |
+|--------------------------------------------
+|                    op                     |
+|-------------------------------------------|
+|                   seqno                   |
+|-------------------------------------------|
+|        flag         |        size         |
+|-------------------------------------------|
+
+/* Error definitions */
+var EEXIST = errors.New("Component exists")
+var ENOENT = errors.New("Component doesn't exist")
+var EPTR   = errors.New("Pointer is nil")
+var ENOMEM = errors.New("Memory allocation failed")
+
+type McastMsgHeader struct {
+    OP    uint32
+    Seq   uint32
+    Flag  uint16
+    Dlen  uint16
+}
+
+func (header *McastMsgHeader) isReq() bool {
+    if (header.Flag & HDRFLAGREQ) == 0 {
+        return false
+    } else {
+        return true
+    }
+}
+
+type McastReq struct {
+    reqfunc    func (*McastRPC, []byte, uint16) error
+    respfunc   func (*McastRPC, []byte, uint16) error
+}
+
+/* MRPC context */
+type McastRPC struct {
+    conn         *net.UDPConn
+    /* Mcast group address and port */
+    addr           *net.UDPAddr
+    max_dgram_size int
+    /* Request mapping */
+    reqs           map[uint32] *McastReq
+
+    /* Sequence number */
+    seq            uint32
+
+    done           bool
+    wait           sync.WaitGroup
+
+    encbuf         *bufio.Writer
+    encoder        *gob.Encoder
+    decoder        *gob.Decoder
+}
+
+func (rpc *McastRPC) RegisterReqHandler (op uint32, reqhandler func(*McastRPC, []byte, uint16) error, resphandler func(*McastRPC, []byte, uint16) error ) error {
+
+    if rpc.reqs == nil {
+        rpc.reqs = make(map[uint32] *McastReq)
+    }
+
+    _, ok := rpc.reqs[op]
+    if ok == true {
+        return EEXIST
+    }
+    req := new(McastReq)
+    req.reqfunc  = reqhandler
+    req.respfunc = resphandler
+    rpc.reqs[op] = req
+
+    return nil
+}
+
+func (rpc *McastRPC) SetMaxDgramSize(size int) {
+    rpc.max_dgram_size = size
+}
+
+func (rpc *McastRPC) GetMaxDgramSize() int {
+    return rpc.max_dgram_size
+}
+
+func (rpc *McastRPC) Listener() {
+    defer rpc.wait.Done()
+
+    for rpc.done == false {
+        rpc.Receive()
+    }
+}
+
+/* MRPC initialization */
+func (rpc *McastRPC) Start(gaddr string) error {
+    var err error
+    rpc.addr, err = net.ResolveUDPAddr("udp", gaddr)
+    if err != nil {
+        return err
+    }
+
+    rpc.conn, err = net.ListenMulticastUDP("udp", nil, rpc.addr)
+    if err != nil {
+        return err
+    }
+
+    if (rpc.reqs == nil) {
+        rpc.reqs = make(map[uint32] *McastReq)
+    }
+
+    if (rpc.max_dgram_size == 0) {
+        rpc.max_dgram_size = DefaultDgramSize
+    }
+
+    /* We use write buffer to merge header and data into one single diagram */
+    if rpc.encbuf = bufio.NewWriterSize(rpc, rpc.max_dgram_size); rpc.encbuf == nil {
+        return ENOMEM
+    }
+
+    if rpc.encoder = gob.NewEncoder(rpc.encbuf); rpc.encoder == nil {
+        return ENOMEM
+    }
+
+    /* it's no need to use buffered I/O to handler read/receive */
+    if rpc.decoder = gob.NewDecoder(rpc); rpc.decoder == nil {
+        return ENOMEM
+    }
+
+    rpc.seq = 0
+
+    rpc.done = false
+    rpc.wait.Add(1)
+
+    go rpc.Listener()
+
+    return err
+}
+
+func (rpc *McastRPC) Stop()  {
+
+    /* Tell rpc.Listener to quit */
+    rpc.done = true
+
+    /* Wait rpc.Listener to quit */
+    rpc.wait.Wait()
+
+    rpc.conn.Close()
+}
+
+func (rpc *McastRPC) Send(op uint32, isReq bool, data []byte) error {
+
+    defer rpc.wait.Done()
+    rpc.wait.Add(1)
+
+    header := new(McastMsgHeader)
+    header.OP   = op
+    header.Seq  = rpc.seq
+    header.Dlen = (uint16)(len(data))
+
+    if isReq {
+        header.Flag |= HDRFLAGREQ
+    }
+
+    rpc.seq++
+
+    err := rpc.encoder.Encode(*header)
+    if err != nil {
+        return err
+    }
+
+    err = rpc.encoder.Encode(data)
+    if err != nil {
+        return err
+    }
+
+    return  rpc.encbuf.Flush()
+}
+
+func (rpc *McastRPC) Write (data []byte) (int, error) {
+    /* I don't understand why WriteToUDP works but Write not. Seems like a bug */
+    return rpc.conn.WriteToUDP(data, rpc.addr)
+}
+
+func (rpc *McastRPC) Receive() error {
+
+    var header McastMsgHeader
+    var err error
+
+    defer rpc.wait.Done()
+    rpc.wait.Add(1)
+    if err = rpc.decoder.Decode(&header); err != nil {
+        return err
+    }
+
+    if _, ok := rpc.reqs[header.OP]; ok == false {
+        return ENOENT
+    }
+
+    buf := make([]byte, header.Dlen)
+    if buf == nil {
+        return ENOMEM
+    }
+
+    if err = rpc.decoder.Decode(&buf); err != nil {
+        return err
+    }
+
+    if header.isReq() == true {
+        if reqfunc := rpc.reqs[header.OP].reqfunc; reqfunc != nil {
+            return reqfunc(rpc, buf, header.Dlen)
+        }
+    } else {
+        if respfunc := rpc.reqs[header.OP].respfunc; respfunc != nil {
+            return respfunc(rpc, buf, header.Dlen)
+        }
+    }
+
+    return nil
+}
+
+func (rpc *McastRPC) Read(buf []byte) (int, error) {
+    n, _, err := rpc.conn.ReadFromUDP(buf)
+    return n, err
+}
