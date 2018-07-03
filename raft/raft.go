@@ -23,7 +23,7 @@ type RaftState struct {
     Op      uint16
     /* local address */
     Addr    uint32
-    /* Target node address */
+    /* Node address to be voted */
     VAddr   uint32
 }
 
@@ -64,15 +64,7 @@ func (rcb *RaftCtrlBlock) Debug(args ... interface{}) {
     if rcb.debug == false {
         return
     }
-
-    for _, v:= range args {
-        switch v.(type)  {
-            default:
-                fmt.Print(v)
-                fmt.Print(" ")
-        }
-    }
-    fmt.Print("\n")
+    fmt.Print(args,"\n")
 }
 
 func (rcb *RaftCtrlBlock) SetDebug(val bool) {
