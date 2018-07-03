@@ -23,7 +23,7 @@ type RaftState struct {
     Op      uint16
     /* local address */
     Addr    uint32
-    /* Target node address */
+    /* Node address to be voted */
     VAddr   uint32
 }
 
@@ -32,7 +32,7 @@ type RaftIO interface {
 }
 
 type RaftPeer struct {
-    lifecycle   uint8
+    alive   uint8
     vote        uint8
 }
 
@@ -79,7 +79,7 @@ func (rcb *RaftCtrlBlock) SetDebug(val bool) {
     rcb.debug = val
 }
 
-/* Scan the events to be handled */
+/* Scan and handle the events */
 func (rcb *RaftCtrlBlock) scaner() {
     for {
         rcb.Debug("[", rcb.state.State,"]:", "scan", rcb.peerlist)
@@ -98,7 +98,7 @@ func (rcb *RaftCtrlBlock) scaner() {
                 }
             } else if rcb.state.State == RAFT_STATE_CANDIDATE {
                 rcb.Debug("[", rcb.state.State, "]:","ARB: ",rcb.countvote(), len(rcb.peerlist))
-                if rcb.countvote() > uint32(len(rcb.peerlist)/2) || len(rcb.peerlist) == 1 {
+                if rcb.countvote() >= (len(rcb.peerlist)/2+1) {
                     rcb.Leader()
                 } else {
                     rcb.Follower()
@@ -111,11 +111,8 @@ func (rcb *RaftCtrlBlock) scaner() {
 func (rcb *RaftCtrlBlock) age() {
     rcb.lmutex.Lock()
     for key := range rcb.peerlist {
-        if key == rcb.state.Addr {
-            continue
-        }
-        rcb.peerlist[key].lifecycle--
-        if rcb.peerlist[key].lifecycle == 0 {
+        rcb.peerlist[key].alive--
+        if rcb.peerlist[key].alive == 0 {
             rcb.remove(key)
             if key == rcb.leader || key == rcb.candidate {
                 rcb.Follower()
@@ -127,7 +124,7 @@ func (rcb *RaftCtrlBlock) age() {
 
 func (rcb *RaftCtrlBlock) refresh(idx uint32) {
     rcb.lmutex.Lock()
-    rcb.peerlist[idx].lifecycle = PEER_ALIVE_LIFECYCLE
+    rcb.peerlist[idx].alive = PEER_ALIVE_LIFECYCLE
     rcb.lmutex.Unlock()
 }
 
@@ -149,7 +146,7 @@ func (rcb *RaftCtrlBlock) add(idx uint32) error {
     if peer == nil {
         return ENOMEM
     }
-    peer.lifecycle = PEER_ALIVE_LIFECYCLE
+    peer.alive = PEER_ALIVE_LIFECYCLE
     peer.vote = 0
 
     rcb.lmutex.Lock()
@@ -166,14 +163,12 @@ func (rcb *RaftCtrlBlock) setvote(idx uint32,val uint8) {
 
 func (rcb *RaftCtrlBlock) clearvote() {
     for key := range rcb.peerlist {
-        if key != rcb.state.Addr {
-            rcb.setvote(key, 0)
-        }
+        rcb.setvote(key, 0)
     }
 }
 
-func (rcb *RaftCtrlBlock) countvote() uint32 {
-    var cnt uint32
+func (rcb *RaftCtrlBlock) countvote() int {
+    cnt := 1
     rcb.lmutex.Lock()
     for key := range rcb.peerlist {
         if rcb.peerlist[key].vote > 0 {
@@ -277,10 +272,6 @@ func (rcb *RaftCtrlBlock) Init(addr uint32, io RaftIO, async bool) error {
     if rcb.peerlist == nil {
         return ENOMEM
     }
-
-    /* Vote for myself */
-    rcb.add(addr)
-    rcb.setvote(addr, 1)
 
     rcb.Follower()
 
