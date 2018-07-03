@@ -33,7 +33,7 @@ type RaftIO interface {
 
 type RaftPeer struct {
     alive   uint8
-    vote    uint8
+    vote        uint8
 }
 
 /* Control block */
@@ -64,7 +64,15 @@ func (rcb *RaftCtrlBlock) Debug(args ... interface{}) {
     if rcb.debug == false {
         return
     }
-    fmt.Print(args,"\n")
+
+    for _, v:= range args {
+        switch v.(type)  {
+            default:
+                fmt.Print(v)
+                fmt.Print(" ")
+        }
+    }
+    fmt.Print("\n")
 }
 
 func (rcb *RaftCtrlBlock) SetDebug(val bool) {
