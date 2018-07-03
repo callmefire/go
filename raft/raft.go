@@ -33,7 +33,7 @@ type RaftIO interface {
 
 type RaftPeer struct {
     alive   uint8
-    vote        uint8
+    vote    uint8
 }
 
 /* Control block */
@@ -307,7 +307,7 @@ func (rcb *RaftCtrlBlock) Follower() {
     /* Start random timer to be Candidate */
     rand.Seed(time.Now().UnixNano())
     interval := time.Duration(rand.Intn(7) * 1000 + 3000) * time.Millisecond
-    rcb.Debug("[", rcb.state.State, "]:", "set timeout", interval)
+    rcb.Debug("[", rcb.state.State, "]:", "set state timeout", interval)
     if rcb.stateTimer == nil {
         rcb.stateTimer = time.NewTimer(interval)
     } else {
@@ -323,7 +323,7 @@ func (rcb *RaftCtrlBlock) Candidate() {
     rcb.leader      = 0
 
     rcb.Debug("[", rcb.state.State, "]:")
-    /* Start ARB window timer */
+    /* Start ARB window */
     if rcb.stateTimer == nil {
         rcb.stateTimer = time.NewTimer(3000*time.Millisecond)
     } else {
