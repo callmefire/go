@@ -33,7 +33,7 @@ type RaftIO interface {
 
 type RaftPeer struct {
     alive   uint8
-    vote        uint8
+    vote    uint8
 }
 
 /* Control block */
