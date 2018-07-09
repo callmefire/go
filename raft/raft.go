@@ -82,7 +82,7 @@ func (rcb *RaftCtrlBlock) SetDebug(val bool) {
 /* Scan and handle the events */
 func (rcb *RaftCtrlBlock) scaner() {
     for {
-        rcb.Debug("[", rcb.state.State,"]:", "scan", rcb.peerlist)
+        rcb.Debug("[", rcb.state.State,"]:", "scan peers", rcb.peerlist)
         select {
         case <-rcb.sendTimer.C:
             rcb.Debug("[", rcb.state.State, "]:", "Send timer triigered")
@@ -93,7 +93,10 @@ func (rcb *RaftCtrlBlock) scaner() {
         case <-rcb.stateTimer.C:
             rcb.Debug("[", rcb.state.State, "]:", "State timer triigered")
             if rcb.state.State == RAFT_STATE_FOLLOWER {
-                if rcb.candidate == 0 && rcb.leader == 0 {
+                if len(rcb.peerlist) == 0 {
+                    /* If I'm only node, wait others */
+                    rcb.Follower()
+                } else if rcb.candidate == 0 && rcb.leader == 0 {
                     rcb.Candidate()
                 }
             } else if rcb.state.State == RAFT_STATE_CANDIDATE {
