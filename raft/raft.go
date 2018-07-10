@@ -101,7 +101,10 @@ func (rcb *RaftCtrlBlock) scaner() {
                 }
             } else if rcb.state.State == RAFT_STATE_CANDIDATE {
                 rcb.Debug("[", rcb.state.State, "]:","ARB: ",rcb.countvote(), len(rcb.peerlist))
-                if rcb.countvote() >= (len(rcb.peerlist)/2+1) {
+                if len(rcb.state.State) == 0 {
+                    /* Only node */
+                    rcb.Follower()
+                } else if rcb.countvote() >= (len(rcb.peerlist)/2+1) {
                     rcb.Leader()
                 } else {
                     rcb.Follower()
@@ -123,6 +126,11 @@ func (rcb *RaftCtrlBlock) age() {
         }
     }
     rcb.lmutex.Unlock()
+
+    if len(rcb.peerlist) == 0 && rcb.state.State == RAFT_STATE_LEADER {
+        /* Only node */
+        rcb.Follower()
+    }
 }
 
 func (rcb *RaftCtrlBlock) refresh(idx uint32) {
