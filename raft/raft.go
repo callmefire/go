@@ -101,7 +101,7 @@ func (rcb *RaftCtrlBlock) scaner() {
                 }
             } else if rcb.state.State == RAFT_STATE_CANDIDATE {
                 rcb.Debug("[", rcb.state.State, "]:","ARB: ",rcb.countvote(), len(rcb.peerlist))
-                if len(rcb.state.State) == 0 {
+                if len(rcb.peerlist) == 0 {
                     /* Only node */
                     rcb.Follower()
                 } else if rcb.countvote() >= (len(rcb.peerlist)/2+1) {
@@ -120,7 +120,7 @@ func (rcb *RaftCtrlBlock) age() {
         rcb.peerlist[key].alive--
         if rcb.peerlist[key].alive == 0 {
             rcb.remove(key)
-            if key == rcb.leader || key == rcb.candidate {
+            if key == rcb.leader || key == rcb.candidate || (len(rcb.peerlist) == 0 && rcb.state.State == RAFT_STATE_LEADER) {
                 rcb.Follower()
             }
         }
