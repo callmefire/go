@@ -9,7 +9,6 @@ import (
 
 const (
     DefaultDgramSize  = 8192
-    HDRFLAGREQ uint16 = 1
 )
 
 /*
@@ -22,6 +21,8 @@ Message format
 |                   seqno                   |
 |-------------------------------------------|
 |        flag         |        size         |
+|-------------------------------------------|
+|                   data                    |
 |-------------------------------------------|
 
 Json format
@@ -48,36 +49,27 @@ type McastMsgHeader struct {
     Data  []byte    `json:"data"`
 }
 
-func (header *McastMsgHeader) isReq() bool {
-    if (header.Flag & HDRFLAGREQ) == 0 {
-        return false
-    } else {
-        return true
-    }
-}
-
 type McastReq struct {
     reqfunc    func ([]byte, uint16) error
-    respfunc   func ([]byte, uint16) error
 }
 
 /* MRPC context */
 type McastRPC struct {
     conn         *net.UDPConn
     /* Mcast group address and port */
-    addr           *net.UDPAddr
+    addr         *net.UDPAddr
     max_dgram_size int
     /* Request mapping */
-    reqs           map[uint32] *McastReq
+    reqs         map[uint32] *McastReq
 
     /* Sequence number */
-    seq            uint32
+    seq          uint32
 
-    done           bool
-    wait           sync.WaitGroup
+    closed       bool
+    wait         sync.WaitGroup
 }
 
-func (rpc *McastRPC) RegisterReqHandler (op uint32, reqhandler func([]byte, uint16) error, resphandler func([]byte, uint16) error ) error {
+func (rpc *McastRPC) RegisterReqHandler (op uint32, reqhandler func([]byte, uint16) error) error {
 
     if rpc.reqs == nil {
         rpc.reqs = make(map[uint32] *McastReq)
@@ -89,7 +81,6 @@ func (rpc *McastRPC) RegisterReqHandler (op uint32, reqhandler func([]byte, uint
     }
     req := new(McastReq)
     req.reqfunc  = reqhandler
-    req.respfunc = resphandler
     rpc.reqs[op] = req
 
     return nil
@@ -103,11 +94,11 @@ func (rpc *McastRPC) GetMaxDgramSize() int {
     return rpc.max_dgram_size
 }
 
-func (rpc *McastRPC) Listener() {
+func (rpc *McastRPC) listener() {
     defer rpc.wait.Done()
 
-    for rpc.done == false {
-        rpc.Receive()
+    for rpc.closed == false {
+        rpc.receive()
     }
 }
 
@@ -128,36 +119,36 @@ func (rpc *McastRPC) Start(gaddr string) error {
         rpc.reqs = make(map[uint32] *McastReq)
     }
 
-    rpc.max_dgram_size = DefaultDgramSize
+    if rpc.max_dgram_size == 0 {
+        rpc.max_dgram_size = DefaultDgramSize
+    }
+
     rpc.seq = 0
 
-    rpc.done = false
+    rpc.closed = false
     rpc.wait.Add(1)
 
-    go rpc.Listener()
+    go rpc.listener()
 
     return err
 }
 
 func (rpc *McastRPC) Stop()  {
 
-    /* Tell rpc.Listener to quit */
-    rpc.done = true
-    /* Wait rpc.Listener to quit */
+    /* Tell rpc.listener to quit */
+    rpc.closed = true
+    /* Wait rpc.listener to quit */
     rpc.wait.Wait()
 
     rpc.conn.Close()
 }
 
-func (rpc *McastRPC) Send(op uint32, isReq bool, data []byte) error {
+func (rpc *McastRPC) Send(op uint32, data []byte) error {
     header := new(McastMsgHeader)
     header.OP   = op
     header.Seq  = rpc.seq
     header.Dlen = (uint16)(len(data))
 
-    if isReq {
-        header.Flag |= HDRFLAGREQ
-    }
     header.Data = append(header.Data, data...)
     rpc.seq++
 
@@ -176,7 +167,7 @@ func (rpc *McastRPC) Send(op uint32, isReq bool, data []byte) error {
     return  err
 }
 
-func (rpc *McastRPC) Receive() error {
+func (rpc *McastRPC) receive() error {
 
     var header *McastMsgHeader
     var err error
@@ -190,7 +181,7 @@ func (rpc *McastRPC) Receive() error {
         return err
     }
 
-    if header, err = rpc.ParseHeader(buf, n); err != nil {
+    if header, err = rpc.parse(buf, n); err != nil {
         return err
     }
 
@@ -198,20 +189,14 @@ func (rpc *McastRPC) Receive() error {
         return ENOENT
     }
 
-    if header.isReq() == true {
-        if reqfunc := rpc.reqs[header.OP].reqfunc; reqfunc != nil {
-            return reqfunc(header.Data, header.Dlen)
-        }
-    } else {
-        if respfunc := rpc.reqs[header.OP].respfunc; respfunc != nil {
-            return respfunc(header.Data, header.Dlen)
-        }
+    if reqfunc := rpc.reqs[header.OP].reqfunc; reqfunc != nil {
+        return reqfunc(header.Data, header.Dlen)
     }
 
     return nil
 }
 
-func (rpc *McastRPC) ParseHeader (data []byte, len int) (*McastMsgHeader, error) {
+func (rpc *McastRPC) parse(data []byte, len int) (*McastMsgHeader, error) {
 
     var err error
 

@@ -24,7 +24,7 @@ func main() {
     cluster := new(Cluster)
     cluster.rpc = new(mcastrpc.McastRPC)
 
-    cluster.rpc.RegisterReqHandler(RAFTCLUSTER, cluster.Receive, nil)
+    cluster.rpc.RegisterReqHandler(RAFTCLUSTER, cluster.Receive)
     cluster.rpc.Start("234.5.6.7:9000")
 
     cluster.raft = new(raft.RaftCtrlBlock)
@@ -37,5 +37,5 @@ func (cluster *Cluster) Receive(data []byte, dlen uint16 ) error {
 }
 
 func (cluster *Cluster) Send(data []byte, dlen uint16) error {
-    return cluster.rpc.Send(RAFTCLUSTER, true, data)
+    return cluster.rpc.Send(RAFTCLUSTER, data)
 }
